@@ -1,5 +1,6 @@
 .idea
 .DS_Store
+creds.json
 
 Ffab/obj/
 Ffab/bin/
