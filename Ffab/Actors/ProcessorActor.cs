@@ -1,26 +1,73 @@
+using System;
 using System.Diagnostics;
 using Akka.Actor;
 using Serilog;
 
 namespace Ffab.Actors
 {
+    /// <summary>
+    /// Actor that synchronously processes file.
+    /// </summary>
     public class ProcessorActor : ReceiveActor
     {
-        public class StartJobRequest
+        /// <summary>
+        /// Requests the processor to begin.
+        /// </summary>
+        public class Request
         {
+            /// <summary>
+            /// The job id.
+            /// </summary>
+            public long JobId { get; set; }
+            
+            /// <summary>
+            /// The actor to send a response to.
+            /// </summary>
             public IActorRef Target { get; set; }
+            
+            /// <summary>
+            /// The file path.
+            /// </summary>
             public string InputPath { get; set; }
+            
+            /// <summary>
+            /// The folder to output into.
+            /// </summary>
             public string OutputDir { get; set; }
         }
 
-        public class StartJobResponse
+        /// <summary>
+        /// Response message sent to the target after processing.
+        /// </summary>
+        public class Response
         {
+            /// <summary>
+            /// The id of the job.
+            /// </summary>
+            public long JobId { get; set; }
+            
+            /// <summary>
+            /// True iff everything completed successfully.
+            /// </summary>
+            public bool Success { get; set; }
+            
+            /// <summary>
+            /// If success is false, this will be set to the error that occurred.
+            /// </summary>
+            public string Error { get; set; }
+            
+            /// <summary>
+            /// The directory into which the files were output. 
+            /// </summary>
             public string OutputDir { get; set; }
         }
 
+        /// <summary>
+        /// Constructor.
+        /// </summary>
         public ProcessorActor()
         {
-            Receive<StartJobRequest>(msg =>
+            Receive<Request>(msg =>
             {
                 var inputName = msg.InputPath;
                 var targetDir = msg.OutputDir;
@@ -39,18 +86,38 @@ namespace Ffab.Actors
                         Arguments = arguments,
                     }
                 };
-                process.Start();
+
+                try
+                {
+                    process.Start();
+                }
+                catch (Exception exception)
+                {
+                    Log.Error("Fatal: could not start ffmpeg: {@JobId}.", msg.JobId);
+                    
+                    target.Tell(new Response
+                    {
+                        Success = false,
+                        Error = exception.ToString(),
+                    });
+
+                    return;
+                }
+
                 process.BeginOutputReadLine();
                 process.WaitForExit();
 
                 // done
-                target.Tell(new StartJobResponse
+                target.Tell(new Response
                 {
+                    Success = true,
                     OutputDir = targetDir,
+                    JobId = msg.JobId,
                 });
             });
         }
         
+        /// <inheritdoc />
         protected override void PostStop()
         {
             base.PostStop();

@@ -1,14 +1,23 @@
 using System.IO;
 using Akka.Actor;
 using Akka.Routing;
+using Newtonsoft.Json;
 using Serilog;
 
 namespace Ffab.Actors
 {
+    /// <summary>
+    /// Main actor, controls all the others.
+    /// </summary>
     public class AppActor : ReceiveActor
     {
+        /// <summary>
+        /// Constructor.
+        /// </summary>
         public AppActor(AppConfiguration config)
         {
+            Log.Information($"Starting app with configuration: {JsonConvert.SerializeObject(config)}.");
+            
             // prepare
             Directory.CreateDirectory(config.DownloadBaseDir);
             Directory.CreateDirectory(config.OutputBaseDir);
@@ -52,12 +61,19 @@ namespace Ffab.Actors
                 "processors");
             
             // listen for completed jobs
-            Receive<JobSagaActor.StartJobResponse>(message =>
+            Receive<JobSagaActor.StartJobResponse>(msg =>
             {
-                Log.Information("Completed job {@JobId}.", message.JobId);
-                
-                // clean up actor
-                Context.Stop(message.Self);
+                if (!msg.Success)
+                {
+                    Log.Error("Job {@JobId} failed: {@Error}.", msg.JobId, msg.Error);
+                }
+                else
+                {
+                    Log.Information("Completed job {@JobId}.", msg.JobId);
+                }
+
+                // clean-up sender
+                Context.Stop(Context.Sender);
             });
             
             // listen for new jobs from http host and create new sage

@@ -6,38 +6,102 @@ using Serilog;
 
 namespace Ffab.Actors
 {
+    /// <summary>
+    /// Manages a job's progression.
+    /// </summary>
     public class JobSagaActor : ReceiveActor
     {
+        /// <summary>
+        /// Sent to start a job.
+        /// </summary>
         public class StartJobRequest
         {
+            /// <summary>
+            /// The actor to send the response to.
+            /// </summary>
             public IActorRef Target { get; set; }
+            
+            /// <summary>
+            /// Id of the job.
+            /// </summary>
             public long JobId { get; set; }
+            
+            /// <summary>
+            /// The url to download.
+            /// </summary>
             public string Url { get; set; }
+            
+            /// <summary>
+            /// The bytes to download.
+            /// </summary>
             public string DownloadBaseDir { get; set; }
+            
+            /// <summary>
+            /// The directory into which we should output processed files.
+            /// </summary>
             public string OutputBaseDir { get; set; }
         }
         
+        /// <summary>
+        /// Send from this actor when a job is complete.
+        /// </summary>
         public class StartJobResponse
         {
+            /// <summary>
+            /// True iff the job was successful.
+            /// </summary>
             public bool Success { get; set; }
-            public IActorRef Self { get; set; }
+            
+            /// <summary>
+            /// Any errors, if Success is false.
+            /// </summary>
+            public string Error { get; set; }
+            
+            /// <summary>
+            /// the job id this is referring to.
+            /// </summary>
             public long JobId { get; set; }
         }
 
+        /// <summary>
+        /// Used to tick the actor, internally.
+        /// </summary>
         private class Tick
         {
             //
         }
         
-        private HashSet<string> _dirtyFiles = new();
+        /// <summary>
+        /// Collection of incomplete files.
+        /// </summary>
+        private readonly HashSet<string> _dirtyFiles = new();
         
+        /// <summary>
+        /// Actor references.
+        /// </summary>
         private readonly IActorRef _downloaders;
         private readonly IActorRef _uploaders;
         private readonly IActorRef _processors;
         private readonly IActorRef _monitor;
-        
-        private ICancelable _tickCancelable;
 
+        /// <summary>
+        /// All cancelable things.
+        /// </summary>
+        private readonly HashSet<ICancelable> _cancelables = new();
+
+        /// <summary>
+        /// Base directory for processed files.
+        /// </summary>
+        private string _outputBaseDir;
+        
+        /// <summary>
+        /// Base directory for downloaded files.
+        /// </summary>
+        private string _downloadBaseDir;
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
         public JobSagaActor(
             IActorRef downloaders,
             IActorRef uploaders,
@@ -55,13 +119,27 @@ namespace Ffab.Actors
             Become(NotStarted);
         }
 
+        /// <inheritdoc />
         protected override void PostStop()
         {
             base.PostStop();
-            
-            _tickCancelable?.Cancel();
+
+            foreach (var cancelable in _cancelables)
+            {
+                try
+                {
+                    cancelable.Cancel();
+                }
+                catch
+                {
+                    //
+                }
+            }
         }
 
+        /// <summary>
+        /// State when the actor is waiting ot start.
+        /// </summary>
         private void NotStarted()
         {
             // listen to start job
@@ -73,9 +151,15 @@ namespace Ffab.Actors
                 msg.OutputBaseDir)));
         }
 
+        /// <summary>
+        /// Called to start the job.
+        /// </summary>
         private Action Started(IActorRef target, long jobId, string url, string downloadBaseDir, string outputBaseDir) => () =>
         {
             Log.Information("Starting job {@JobId}.", jobId);
+
+            _downloadBaseDir = downloadBaseDir;
+            _outputBaseDir = outputBaseDir;
             
             // listen for download complete
             Receive<DownloaderActor.Response>(msg =>
@@ -98,17 +182,30 @@ namespace Ffab.Actors
                 });
                 
                 // pass to processor
-                _processors.Tell(new ProcessorActor.StartJobRequest
+                _processors.Tell(new ProcessorActor.Request
                 {
                     Target = Self,
+                    JobId = jobId,
                     InputPath = msg.OutputPath,
                     OutputDir = targetDir,
                 });
             });
 
             // listen for processing complete
-            Receive<ProcessorActor.StartJobResponse>(msg =>
+            Receive<ProcessorActor.Response>(msg =>
             {
+                if (!msg.Success)
+                {
+                    target.Tell(new StartJobResponse
+                    {
+                        Success = false,
+                        Error = msg.Error,
+                        JobId = jobId
+                    });
+
+                    return;
+                }
+                
                 Log.Information("Processing complete! Waiting for uploads to finish for {@JobId}.", jobId);
 
                 // now we wait for uploads to complete
@@ -127,6 +224,9 @@ namespace Ffab.Actors
             });
         };
 
+        /// <summary>
+        /// Waits for all uploads to complete before signalling the end of the job.
+        /// </summary>
         private Action WaitingForUploads(IActorRef target, long jobId) => () =>
         {
             ListenForFileEvents();
@@ -136,23 +236,43 @@ namespace Ffab.Actors
                 var numDirtyFiles = _dirtyFiles.Count;
                 if (numDirtyFiles == 0)
                 {
-                    // TODO: delete all
+                    try
+                    {
+                        Directory.Delete(_downloadBaseDir, true);
+                    }
+                    catch (Exception exception)
+                    {
+                        Log.Error(
+                            "Could not delete downloaded files at {@DownloadPath} for {@JobId}: {@Error}.",
+                            _downloadBaseDir, jobId, exception.ToString());
+                    }
                     
+                    try
+                    {
+                        Directory.Delete(_outputBaseDir, true);
+                    }
+                    catch (Exception exception)
+                    {
+                        Log.Error(
+                            "Could not delete processed files at {@ProcessPath} for {@JobId}: {@Error}.",
+                            _downloadBaseDir, jobId, exception.ToString());
+                    }
+
                     target.Tell(new StartJobResponse
                     {
-                        Self = Self,
                         JobId = jobId,
                         Success = true,
                     });
                 }
             });
             
-            _tickCancelable = Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(
-                TimeSpan.FromSeconds(2),
-                TimeSpan.FromSeconds(2),
-                Self,
-                new Tick(),
-                Self);
+            _cancelables.Add(
+                Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(
+                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromSeconds(2),
+                    Self,
+                    new Tick(),
+                    Self));
         };
         
         /// <summary>
@@ -166,10 +286,10 @@ namespace Ffab.Actors
                 _uploaders.Tell(new UploaderActor.Request
                 {
                     Target = Self,
-                    InputFile = msg.InputFile,
+                    InputFile = msg.File,
                 });
                 
-                _dirtyFiles.Add(msg.InputFile);
+                _dirtyFiles.Add(msg.File);
             });
             
             // listen for upload complete
@@ -177,8 +297,18 @@ namespace Ffab.Actors
             {
                 if (!msg.Success)
                 {
-                    // TODO: schedule retry
                     Log.Warning("Could not upload file. TODO: schedule retry!");
+                    
+                    _cancelables.Add(
+                        Context.System.Scheduler.ScheduleTellOnceCancelable(
+                            TimeSpan.FromSeconds(2),
+                            _uploaders,
+                            new UploaderActor.Request
+                            {
+                                
+                            },
+                            Self));
+                    return;
                 }
 
                 // file is no longer dirty

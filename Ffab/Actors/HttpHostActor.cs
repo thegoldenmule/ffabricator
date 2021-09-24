@@ -7,8 +7,14 @@ using Microsoft.Extensions.Hosting;
 
 namespace Ffab
 {
+    /// <summary>
+    /// Startup object for WebAPI.
+    /// </summary>
     public class Startup
     {
+        /// <summary>
+        /// Configures the services on the collection.
+        /// </summary>
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddHealthChecks();
@@ -21,6 +27,9 @@ namespace Ffab
                     .AllowCredentials()));
         }
         
+        /// <summary>
+        /// Configures the app.
+        /// </summary>
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             app.UseRouting();
@@ -32,21 +41,46 @@ namespace Ffab
         }
     }
     
+    /// <summary>
+    /// This actor manages the http service.
+    /// </summary>
     public class HttpHostActor : ReceiveActor
     {
+        /// <summary>
+        /// The actor to send messages to.
+        /// </summary>
         private IActorRef _target;
 
+        /// <summary>
+        /// Starts the http service.
+        /// </summary>
         public class StartMessage
         {
+            /// <summary>
+            /// The actor to send messages to.
+            /// </summary>
             public IActorRef Target { get; set; }
         }
         
+        /// <summary>
+        /// Send from this actor when there is a new job.
+        /// </summary>
         public class NewJobMessage
         {
+            /// <summary>
+            /// Id of the job.
+            /// </summary>
             public long JobId { get; set; }
+            
+            /// <summary>
+            /// The url to download.
+            /// </summary>
             public string Url { get; set; }
         }
 
+        /// <summary>
+        /// Constructor.
+        /// </summary>
         public HttpHostActor()
         {
             Receive<StartMessage>(msg =>
@@ -57,6 +91,9 @@ namespace Ffab
             });
         }
 
+        /// <summary>
+        /// Stops listening to all events and starts the server.
+        /// </summary>
         private void Starting()
         {
             Host
@@ -64,7 +101,6 @@ namespace Ffab
                 .ConfigureServices(services =>
                 {
                     services.AddSingleton(_target);
-                    
                 })
                 .ConfigureWebHostDefaults(builder =>
                 {

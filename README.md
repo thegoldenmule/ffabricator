@@ -4,4 +4,7 @@ Converts video files into HLS streams, and uploads them to a Google Storage Buck
 
 ### How do I run this?
 
-`GOOGLE_APPLICATION_CREDENTIALS=../creds.json dotnet run -- -a config.akka`
+- Create a Google User with appropriate credentials.
+- Make a key, export as json, and add as `creds.json`.
+- `make build`
+- `make run`
