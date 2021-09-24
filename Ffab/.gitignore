@@ -2,3 +2,4 @@ out/
 working/
 creds.json
 Makefile.Custom
+Logs*
