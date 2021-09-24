@@ -1,0 +1,7 @@
+.idea
+.DS_Store
+
+Ffab/obj/
+Ffab/bin/
+Ffab.Test/obj/
+Ffab.Test/bin/

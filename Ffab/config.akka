@@ -1,0 +1,30 @@
+
+processors {
+  type = ForkJoinDispatcher
+  throughput = 100
+  dedicated-thread-pool {
+      thread-count = {{NumProcessors}}
+      deadlock-timeout = 3s
+      threadtype = background
+  }
+}
+
+uploaders {
+  type = ForkJoinDispatcher
+  throughput = 100
+  dedicated-thread-pool {
+      thread-count = {{NumUploaders}}
+      deadlock-timeout = 3s
+      threadtype = background
+  }
+}
+
+downloaders {
+  type = ForkJoinDispatcher
+  throughput = 100
+  dedicated-thread-pool {
+      thread-count = {{NumDownloaders}}
+      deadlock-timeout = 3s
+      threadtype = background
+  }
+}
